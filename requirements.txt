@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+google-analytics-data
+google-auth
+openai
+python-dotenv
