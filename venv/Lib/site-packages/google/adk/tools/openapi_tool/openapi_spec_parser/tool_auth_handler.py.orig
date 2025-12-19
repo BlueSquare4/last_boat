@@ -1,0 +1,306 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Any
+from typing import Dict
+from typing import Literal
+from typing import Optional
+
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel
+
+from ....auth.auth_credential import AuthCredential
+from ....auth.auth_credential import AuthCredentialTypes
+from ....auth.auth_credential import OAuth2AuthResponse
+from ....auth.auth_schemes import AuthScheme
+from ....auth.auth_schemes import AuthSchemeType
+from ...tool_context import ToolContext
+from ..auth.credential_exchangers.auto_auth_credential_exchanger import AutoAuthCredentialExchanger
+from ..auth.credential_exchangers.base_credential_exchanger import AuthCredentialMissingError
+from ..auth.credential_exchangers.base_credential_exchanger import BaseAuthCredentialExchanger
+
+AuthPreparationState = Literal["pending", "done"]
+
+
+class AuthConfig(BaseModel):
+  """Configuration for requesting authentication from the user."""
+
+  description: Optional[str] = ""
+  auth_type: Optional[str] = ""
+  auth_uri: Optional[str] = ""
+
+
+class AuthPreparationResult(BaseModel):
+  """Result of the credential preparation process."""
+
+  state: AuthPreparationState
+  auth_scheme: Optional[AuthScheme] = None
+  auth_credential: Optional[AuthCredential] = None
+  auth_config: Optional[AuthConfig] = None
+
+
+class ToolContextCredentialStore:
+  """Handles storage and retrieval of credentials within a ToolContext."""
+
+  def __init__(self, tool_context: ToolContext):
+    self.tool_context = tool_context
+
+  def get_credential_key(
+      self,
+      auth_scheme: Optional[AuthScheme],
+      auth_credential: Optional[AuthCredential],
+  ) -> str:
+    """Generates a unique key for the given auth scheme and credential."""
+    scheme_name = (
+        f"{auth_scheme.type_.name}_{hash(auth_scheme.model_dump_json())}"
+        if auth_scheme
+        else ""
+    )
+    credential_name = (
+        f"{auth_credential.auth_type.value}_{hash(auth_credential.model_dump_json())}"
+        if auth_credential
+        else ""
+    )
+    # no need to prepend temp: namespace, session state is a copy, changes to
+    # it won't be persisted , only changes in event_action.state_delta will be
+    # persisted. temp: namespace will be cleared after current run. but tool
+    # want access token to be there stored across runs
+    # TODO try not to use session state, this looks a hacky way, depend on
+    # session implementation
+
+    return f"{scheme_name}_{credential_name}_existing_exchanged_credential"
+
+  def get_credential(
+      self,
+      auth_scheme: Optional[AuthScheme],
+      auth_credential: Optional[AuthCredential],
+  ) -> Optional[AuthCredential]:
+    if not self.tool_context:
+      return None
+
+    token_key = self.get_credential_key(auth_scheme, auth_credential)
+    serialized_credential = self.tool_context.state.get(token_key)
+    if not serialized_credential:
+      return None
+    return AuthCredential.model_validate(serialized_credential)
+
+  def store_credential(
+      self,
+      key: str,
+      auth_credential: Optional[AuthCredential],
+  ):
+    if self.tool_context:
+      serializable_credential = jsonable_encoder(
+          auth_credential, exclude_none=True
+      )
+      self.tool_context.state[key] = serializable_credential
+
+  def remove_credential(self, key: str):
+    del self.tool_context.state[key]
+
+  def get_auth_response(self) -> Optional[Dict[str, Any]]:
+    return self.tool_context.get_auth_response() if self.tool_context else None
+
+  def request_credential(self, auth_config: AuthConfig):
+    if not self.tool_context:
+      return
+
+    config_dict = auth_config.model_dump()
+    self.tool_context.request_credential(config_dict)
+
+
+class ToolAuthHandler:
+  """Handles the preparation and exchange of authentication credentials for tools."""
+
+  def __init__(
+      self,
+      auth_scheme: Optional[AuthScheme],
+      auth_credential: Optional[AuthCredential],
+      credential_exchanger: Optional[BaseAuthCredentialExchanger] = None,
+      credential_store: Optional["ToolContextCredentialStore"] = None,
+  ):
+    self.auth_scheme = (
+        auth_scheme.model_copy(deep=True) if auth_scheme else None
+    )
+    self.auth_credential = (
+        auth_credential.model_copy(deep=True) if auth_credential else None
+    )
+    self.credential_exchanger = (
+        credential_exchanger or AutoAuthCredentialExchanger()
+    )
+    self.credential_store = credential_store
+    self.should_store_credential = True
+
+  @classmethod
+  def from_tool_context(
+      cls,
+      tool_context: Optional[ToolContext],
+      auth_scheme: Optional[AuthScheme],
+      auth_credential: Optional[AuthCredential],
+      credential_exchanger: Optional[BaseAuthCredentialExchanger] = None,
+  ) -> "ToolAuthHandler":
+    """Creates a ToolAuthHandler instance from a ToolContext."""
+    credential_store = (
+        ToolContextCredentialStore(tool_context) if tool_context else None
+    )
+    return cls(
+        auth_scheme, auth_credential, credential_exchanger, credential_store
+    )
+
+  def _handle_existing_credential(
+      self,
+  ) -> Optional[AuthPreparationResult]:
+    """Checks for and returns an existing, exchanged credential."""
+    if self.credential_store:
+      existing_credential = self.credential_store.get_credential(
+          self.auth_scheme, self.auth_credential
+      )
+      if existing_credential:
+        return AuthPreparationResult(
+            state="done",
+            auth_scheme=self.auth_scheme,
+            auth_credential=existing_credential,
+        )
+    return None
+
+  def _handle_openid_auth_response(
+      self, auth_response: Dict[str, Any]
+  ) -> Optional[AuthPreparationResult]:
+    """Handles an OpenID Connect authorization response."""
+    if (
+        auth_response
+        and auth_response.get("response", "")
+        and self.auth_scheme
+        and self.auth_scheme.type_ == AuthSchemeType.openIdConnect
+    ):
+      auth_response_uri = auth_response.get("response", "")
+      # Attach auth response uri to credentials.
+      # Use a local copy, and do not modify self.auth_credential
+      auth_credential = self.auth_credential.model_copy(deep=True)
+      if not auth_credential.oauth2.redirect_uri:
+        auth_credential.oauth2.redirect_uri = auth_response.get(
+            "redirect_uri", None
+        )
+      auth_credential.oauth2_response = OAuth2AuthResponse(
+          auth_response_uri=auth_response_uri
+      )
+      return self._exchange_and_store_credential(auth_credential)
+    return None
+
+  def _exchange_and_store_credential(
+      self, auth_credential: AuthCredential
+  ) -> AuthPreparationResult:
+    """Exchanges the credential using the exchanger and stores the result."""
+    try:
+      exchanged_credential = self.credential_exchanger.exchange_credential(
+          self.auth_scheme, auth_credential
+      )
+      if self.credential_store:
+        key = self.credential_store.get_credential_key(
+            self.auth_scheme, self.auth_credential
+        )
+        self.credential_store.store_credential(key, exchanged_credential)
+      return AuthPreparationResult(
+          state="done",
+          auth_scheme=self.auth_scheme,
+          auth_credential=exchanged_credential,
+      )
+    except AuthCredentialMissingError as e:
+      raise e
+    except Exception as e:
+      raise ValueError(f"Failed to exchange credential {e}") from e
+
+  def _handle_openid_auth_request(
+      self, auth_credential: AuthCredential
+  ) -> Optional[AuthPreparationResult]:
+    """Handles the case where an OpenID Connect authentication request is needed."""
+    if (
+        auth_credential.auth_type == AuthCredentialTypes.OPEN_ID_CONNECT
+        and auth_credential.oauth2_response
+        and auth_credential.oauth2_response.auth_uri
+    ):
+      auth_config: AuthConfig = AuthConfig(
+          description="Require OpenID Connect login with auth_uri",
+          auth_type="OAUTH2",
+          auth_uri=auth_credential.oauth2_response.auth_uri,
+      )
+      if self.credential_store:
+        self.credential_store.request_credential(
+            auth_config
+        )  # Delegate to store
+      return AuthPreparationResult(
+          state="pending",
+          auth_scheme=self.auth_scheme,
+          auth_credential=auth_credential,
+          auth_config=auth_config,
+      )
+    return None
+
+  def prepare_auth_credentials(
+      self,
+  ) -> AuthPreparationResult:
+    """Prepares authentication credentials, handling exchange and user interaction."""
+
+    # no auth is needed
+    if not self.auth_scheme:
+      return AuthPreparationResult(state="done")
+
+    # Check for existing credential.
+    existing_result = self._handle_existing_credential()
+    if existing_result:
+      return existing_result
+
+    # Handle OAuth2 AuthCode & OpenIDConnect first.
+    # They may require an additional exchange: Auth code to token.
+    # If auth code exchange finishes,
+    auth_code_response = (
+        self.credential_store.get_auth_response()
+        if self.credential_store
+        else None
+    )
+
+    # exchange access token
+    openid_response_result = self._handle_openid_auth_response(
+        auth_code_response
+    )
+    if openid_response_result:
+      auth_credential = openid_response_result.auth_credential
+    else:
+      try:
+        # Oauth2 & OIDC to generate auth_url
+        auth_credential = self.credential_exchanger.exchange_credential(
+            self.auth_scheme, self.auth_credential
+        )
+      except AuthCredentialMissingError as e:
+        raise e
+      except Exception as e:
+        raise ValueError(f"Failed to exchange credential: {e}") from e
+
+      # send request to adk to collect end user credential
+      openid_request_result = self._handle_openid_auth_request(auth_credential)
+      if openid_request_result:
+        return openid_request_result
+
+    # Store credential if fetch succeed
+    if self.credential_store and self.should_store_credential:
+      key = self.credential_store.get_credential_key(
+          self.auth_scheme, self.auth_credential
+      )
+      self.credential_store.store_credential(key, auth_credential)
+
+    return AuthPreparationResult(
+        state="done",
+        auth_scheme=self.auth_scheme,
+        auth_credential=auth_credential,
+    )

@@ -1,12 +1,9 @@
-google-adk>=0.0.1
-a2a-sdk>=0.0.1
-google-generativeai
 fastapi
 uvicorn
-httpx
 pydantic
 python-dotenv
 pandas
-openpyxl
 requests
 openai
+google-analytics-data
+httpx

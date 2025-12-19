@@ -6,12 +6,10 @@ from google.analytics.data_v1beta.types import (
     DateRange,
     Dimension,
     Metric,
-    OrderBy,
-    FilterExpression,
 )
 from google.oauth2 import service_account
 
-# Allowlist for Tier 1 Safety Validation
+# Allowlist for Safety Validation
 ALLOWED_METRICS = {
     "activeUsers", "sessions", "screenPageViews", "eventCount", "totalUsers", "newUsers"
 }
@@ -20,35 +18,24 @@ ALLOWED_DIMENSIONS = {
 }
 
 def get_ga4_client():
-    """
-    Creates a GA4 client using credentials.json from the project root.
-    Reloads on every call to ensure evaluator updates are picked up.
-    """
+    """Creates a GA4 client using credentials.json."""
     creds_path = os.path.join(os.getcwd(), "credentials.json")
     if not os.path.exists(creds_path):
-        raise FileNotFoundError(f"credentials.json not found at {creds_path}")
+        raise FileNotFoundError(f"credentials.json not found at {creds_path}. Please add your GA4 service account credentials.")
     
     credentials = service_account.Credentials.from_service_account_file(creds_path)
     return BetaAnalyticsDataClient(credentials=credentials)
 
-def run_ga4_report(property_id: str, dimensions: list[str], metrics: list[str], start_date: str, end_date: str):
-    """
-    Executes a GA4 report.
+def run_ga4_report(property_id: str, dimensions: list, metrics: list, start_date: str, end_date: str) -> list:
+    """Execute a GA4 report with validated metrics and dimensions."""
     
-    Args:
-        property_id: The GA4 Property ID.
-        dimensions: List of dimension names (e.g., ['date', 'pagePath']).
-        metrics: List of metric names (e.g., ['activeUsers']).
-        start_date: Start date (YYYY-MM-DD or '30daysAgo').
-        end_date: End date (YYYY-MM-DD or 'today').
-    """
-    # Validation
+    # Validate inputs
     for m in metrics:
         if m not in ALLOWED_METRICS:
-            raise ValueError(f"Metric '{m}' is not allowed. Allowed: {ALLOWED_METRICS}")
+            raise ValueError(f"Metric '{m}' not allowed. Allowed: {ALLOWED_METRICS}")
     for d in dimensions:
         if d not in ALLOWED_DIMENSIONS:
-            raise ValueError(f"Dimension '{d}' is not allowed. Allowed: {ALLOWED_DIMENSIONS}")
+            raise ValueError(f"Dimension '{d}' not allowed. Allowed: {ALLOWED_DIMENSIONS}")
 
     client = get_ga4_client()
     
@@ -61,21 +48,18 @@ def run_ga4_report(property_id: str, dimensions: list[str], metrics: list[str], 
     
     response = client.run_report(request)
     
-    # Parse Response into simple JSON-serializable format
+    # Parse response into JSON-serializable format
     result = []
     for row in response.rows:
         item = {}
         for i, dimension_value in enumerate(row.dimension_values):
             item[dimensions[i]] = dimension_value.value
         for i, metric_value in enumerate(row.metric_values):
-            # Try to convert to int/float if possible
             try:
                 val = float(metric_value.value)
-                if val.is_integer():
-                    val = int(val)
-            except ValueError:
-                val = metric_value.value
-            item[metrics[i]] = val
+                item[metrics[i]] = int(val) if val.is_integer() else val
+            except (ValueError, AttributeError):
+                item[metrics[i]] = metric_value.value
         result.append(item)
         
     return result

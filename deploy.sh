@@ -6,7 +6,7 @@ set -e
 echo "Deploying Spike AI Builder Solution..."
 
 # install uv
-pip install uv
+python -m pip install uv
 
 # Install dependencies using uv for speed
 echo "Installing dependencies..."

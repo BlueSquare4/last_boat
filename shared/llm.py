@@ -4,18 +4,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Spike AI LiteLLM Proxy Configuration
-LITELLM_BASE_URL = "http://3.110.18.218"
-# The key should be in .env or passed via environment variable
-API_KEY = os.getenv("LITELLM_API_KEY", "sk-fake-key-for-now") 
+# LLM Configuration (supports OpenAI API-compatible endpoints)
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-default-key")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 def get_openai_client():
-    """Returns a configured OpenAI client for the LiteLLM proxy."""
+    """Returns a configured OpenAI client."""
     return OpenAI(
-        api_key=API_KEY,
-        base_url=LITELLM_BASE_URL
+        api_key=LLM_API_KEY,
+        base_url=LLM_BASE_URL
     )
 
 def get_model_name():
-    """Returns the default model to use."""
-    return "gemini-1.5-pro"
+    """Returns the model name to use."""
+    return LLM_MODEL

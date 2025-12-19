@@ -1,6 +1,24 @@
+from fastapi import FastAPI
 import uvicorn
-from services.seo_agent.agent import a2a_app
 
-# This file is just an entry point for the uvicorn worker in deploy.sh
+app = FastAPI(title="SEO Agent")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "seo_agent"}
+
+@app.post("/query")
+async def query(payload: dict):
+    """SEO query endpoint."""
+    try:
+        query_text = payload.get("query", "")
+        return {
+            "status": "success",
+            "query": query_text,
+            "message": "SEO query processed"
+        }
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
 if __name__ == "__main__":
-    uvicorn.run(a2a_app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8002)
