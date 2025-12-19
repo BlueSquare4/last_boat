@@ -1,45 +1,45 @@
-# Spike AI Architecture: A Google ADK & A2A Powered Microservice System
+# Spike AI Analytics Platform - Microservice Architecture
 
 ## 1. Executive Summary
 
-This project implements a production-ready **Mixture of Experts (MoE)** AI backend, designed to answer complex natural language queries about Web Analytics (GA4) and Technical SEO. 
+This project implements a production-ready **Multi-Agent System** for analyzing Web Analytics (GA4) and Technical SEO data. 
 
-By leveraging **Google's Agent Development Kit (ADK)** and the **Agent-to-Agent (A2A) Protocol**, we have moved beyond a fragile monolithic agent structure to a robust **Microservices Architecture**. This design ensures modularity, scalability, and precise fault isolation, allowing specialized "Expert Agents" to operate independently while being orchestrated by a central intelligent router.
+Using a **Clean Microservices Architecture**, we have a robust system with independent expert agents that operate separately and are orchestrated by a central intelligent router. This design ensures modularity, scalability, and precise fault isolation—allowing specialized agents to operate independently.
 
 ## 2. Architecture: Agents as Microservices
 
-![Architecture Diagram](archi.png)
-
-The system is composed of three distinct microservices, communicating over HTTP using the standardized A2A protocol.
+The system is composed of three distinct microservices, communicating over HTTP with clean JSON APIs.
 
 ### 2.1 The Orchestrator (Port 8080)
 *   **Role**: The "Brain" and public face of the system.
 *   **Responsibility**: Receiving user queries via a single `POST /query` endpoint.
-*   **Logic**: It does not process data itself. Instead, it uses a Large Language Model (Gemini 1.5 Pro) to classify intent and **route** instructions to the appropriate expert(s).
-*   **Composition**: It consumes the downstream agents using `RemoteA2aAgent`, effectively treating remote microservices as local function calls.
+*   **Logic**: Routes requests to appropriate experts based on query intent.
+*   **Features**: Health checks, intelligent routing, error handling.
 
-### 2.2 The Analytics Expert (Port 8001)
+### 2.2 The Analytics Agent (Port 8001)
 *   **Role**: A specialized agent for Google Analytics 4.
-*   **Tools**: Equipped with the GA4 Data API (`BetaAnalyticsDataClient`).
-*   **Security**: Runs in its own process. If the GA4 client hangs or crashes, it does not bring down the entire system.
-*   **Protocol**: Exposes its capabilities via `.well-known/agent.json` (A2A Standard), allowing the orchestrator to dynamically understand its skills.
+*   **Tools**: GA4 Data API integration (`google.analytics.data`).
+*   **Security**: Runs in its own process for isolation and fault tolerance.
+*   **Features**: Query GA4, get metrics/dimensions, process analytics data.
 
-### 2.3 The SEO Expert (Port 8002)
-*   **Role**: A specialized agent for Technical SEO.
-*   **Tools**: Equipped with Pandas/Python logic to ingest and filter Screaming Frog crawl data.
-*   **Protocol**: Also exposes an A2A interface.
+### 2.3 The SEO Agent (Port 8002)
+*   **Role**: A specialized agent for Technical SEO audit data.
+*   **Tools**: Pandas-based data filtering and analysis.
+*   **Features**: Query SEO crawl data, filter by criteria, identify issues.
 
 ## 3. Technology Stack
 
-We purposefully chose a highly modular, open-source stack to ensure vendor neutrality and extensibility.
+Simple, clean, and production-ready stack using standard Python libraries.
 
-| Component | Technology | Reasoning |
+| Component | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Framework** | **Google ADK (Python)** | Provides the foundational primitives for building `LlmAgent` and `Tool` definitions in a standard way. |
-| **Protocol** | **A2A SDK** | Enables standard discovery and communication between agents. This is key to our microservice approach. |
-| **API Layer** | **FastAPI + Uvicorn** | High-performance, async Python web framework. Standard for modern AI microservices. |
-| **LLM Interface** | **LiteLLM** | provides a unified interface to call OpenAI-compatible endpoints (used here to proxy to Gemini). |
-| **Data Processing** | **Pandas & Google Analytics Data API** | Industry-standard libraries for data manipulation. |
+| **Web Framework** | **FastAPI + Uvicorn** | High-performance async Python API framework |
+| **HTTP Client** | **httpx** | Async HTTP client for service-to-service communication |
+| **LLM Interface** | **OpenAI Python Client** | Unified interface to LLM APIs (OpenAI-compatible) |
+| **Data Processing** | **Pandas** | Data manipulation and analysis |
+| **Analytics API** | **google-analytics-data** | Official Google Analytics 4 Data API |
+| **Configuration** | **python-dotenv** | Environment-based configuration |
+| **Server** | **Uvicorn** | ASGI server for production deployment |
 
 ## 4. Why Microservices? (Superiority over Monolith)
 
@@ -58,52 +58,411 @@ In a traditional Monolithic Agent approach, all tools (GA4, SEO, Database, CRM) 
 
 ## 5. Project Structure
 
-The codebase mirrors the architecture, enforcing separation of concerns.
+Clean, organized codebase with clear separation of concerns.
 
-```text
-/
-├── services/
-│   ├── orchestrator/      # The Router
-│   │   ├── main.py        # Public API (FastAPI)
-│   │   └── agent.py       # Composition Logic (RemoteA2aAgent)
-│   ├── analytics_agent/   # The GA4 Expert
-│   │   ├── main.py        # A2A Server
-│   │   ├── agent.py       # ADK Agent Definition
-│   │   └── tools.py       # GA4 API Integration
-│   └── seo_agent/         # The SEO Expert
-│       ├── main.py        # A2A Server
-│       ├── agent.py       # ADK Agent Definition
-│       └── tools.py       # Pandas/Sheet Logic
-├── shared/                # Common Utilities
-│   └── llm.py             # Centralized Model Configuration
-├── deploy.sh              # Unified Startup Script
-└── requirements.txt       # Project Dependencies
+```
+services/
+├── orchestrator/          # Request Router (Port 8080)
+│   ├── main.py           # FastAPI app & endpoints
+│   └── agent.py          # Routing logic
+├── analytics_agent/       # GA4 Expert (Port 8001)
+│   ├── main.py           # FastAPI app & endpoints
+│   ├── agent.py          # Analytics logic
+│   └── tools.py          # GA4 API integration
+└── seo_agent/            # SEO Expert (Port 8002)
+    ├── main.py           # FastAPI app & endpoints
+    ├── agent.py          # SEO logic
+    └── tools.py          # Data filtering utilities
+
+shared/
+└── llm.py                # LLM client configuration
+
+requirements.txt          # Python dependencies
+.env.template            # Configuration template
+.gitignore               # Git ignore rules
+deploy.ps1               # Windows deployment
+start.sh                 # Linux/Mac startup
+SETUP.md                 # Setup instructions
 ```
 
 ## 6. How to Run
 
 ### Prerequisites
 *   Python 3.10+
-*   `credentials.json` (Google Service Account) in the root.
+*   pip or venv installed
 
 ### Quick Start
-We provide a unified deployment script that installs `uv`, creates a virtual environment, and launches all three microservices in the background.
 
-```bash
-bash deploy.sh
+**Windows (PowerShell):**
+```powershell
+.\deploy.ps1
 ```
 
-Once running:
-*   **Orchestrator**: `http://localhost:8080` (Send POST requests here)
-*   **Analytics Agent**: `http://localhost:8001` (Internal)
-*   **SEO Agent**: `http://localhost:8002` (Internal)
+**Linux/Mac (Bash):**
+```bash
+bash start.sh
+```
 
-### Example Query
+**Manual Start (Any OS):**
+Terminal 1 - Analytics Agent (Port 8001):
+```bash
+python -m uvicorn services.analytics_agent.main:app --host 0.0.0.0 --port 8001
+```
+
+Terminal 2 - SEO Agent (Port 8002):
+```bash
+python -m uvicorn services.seo_agent.main:app --host 0.0.0.0 --port 8002
+```
+
+Terminal 3 - Orchestrator (Port 8080):
+```bash
+python -m uvicorn services.orchestrator.main:app --host 0.0.0.0 --port 8080
+```
+
+### Services Running
+Once all services start, you'll have:
+*   **Orchestrator**: `http://localhost:8080` (Public API - use this)
+*   **Analytics Agent**: `http://localhost:8001` (Internal service)
+*   **SEO Agent**: `http://localhost:8002` (Internal service)
+
+## 7. API Endpoints - Health Checks
+
+### Health Check - Orchestrator
+**Method:** GET  
+**URL:** `http://localhost:8080/health`
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "orchestrator"
+}
+```
+
+### Health Check - Analytics Agent
+**Method:** GET  
+**URL:** `http://localhost:8001/health`
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "analytics_agent"
+}
+```
+
+### Health Check - SEO Agent
+**Method:** GET  
+**URL:** `http://localhost:8002/health`
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "seo_agent"
+}
+```
+
+## 8. Postman API Examples
+
+### 8.1 Orchestrator Query (Main Endpoint)
+
+**Method:** POST  
+**URL:** `http://localhost:8080/query`  
+**Headers:** `Content-Type: application/json`
+
+**Body - Analytics Query:**
+```json
+{
+  "query": "How many active users did we have last week?",
+  "propertyId": "123456789"
+}
+```
+
+**Body - SEO Query:**
+```json
+{
+  "query": "Find pages with missing titles"
+}
+```
+
+**Body - Combined Query:**
+```json
+{
+  "query": "What are my top pages by views and their title tags?",
+  "propertyId": "123456789"
+}
+```
+
+**Expected Response:**
+```json
+{
+  "status": "success",
+  "query": "How many active users did we have last week?",
+  "property_id": "123456789"
+}
+```
+
+### 8.2 Analytics Agent Direct Query
+
+**Method:** POST  
+**URL:** `http://localhost:8001/query`  
+**Headers:** `Content-Type: application/json`
+
+**Body - Get Page Views:**
+```json
+{
+  "query": "Give me daily page views for the last 14 days",
+  "propertyId": "123456789"
+}
+```
+
+**Body - Get Active Users:**
+```json
+{
+  "query": "What are active users by country for the last 30 days?",
+  "propertyId": "123456789"
+}
+```
+
+**Body - Get Sessions:**
+```json
+{
+  "query": "Show me session data by device category",
+  "propertyId": "123456789"
+}
+```
+
+### 8.3 SEO Agent Direct Query
+
+**Method:** POST  
+**URL:** `http://localhost:8002/query`  
+**Headers:** `Content-Type: application/json`
+
+**Body - SEO Analysis:**
+```json
+{
+  "query": "Find all pages with HTTP status codes that are not 200"
+}
+```
+
+**Body - Missing Meta Tags:**
+```json
+{
+  "query": "Show me pages with missing meta descriptions"
+}
+```
+
+**Body - HTTPS Check:**
+```json
+{
+  "query": "List pages that are not using HTTPS"
+}
+```
+
+## 9. Postman Collection (Import Ready)
+
+Save this as `postman_collection.json` and import into Postman:
+
+```json
+{
+  "info": {
+    "name": "Spike AI Analytics API",
+    "description": "Multi-agent analytics and SEO system",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Checks",
+      "item": [
+        {
+          "name": "Orchestrator Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8080/health"
+          }
+        },
+        {
+          "name": "Analytics Agent Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8001/health"
+          }
+        },
+        {
+          "name": "SEO Agent Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "http://localhost:8002/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orchestrator Queries",
+      "item": [
+        {
+          "name": "Analytics Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"How many active users did we have last week?\",\n  \"propertyId\": \"123456789\"\n}"
+            },
+            "url": "http://localhost:8080/query"
+          }
+        },
+        {
+          "name": "SEO Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Find pages with missing titles\"\n}"
+            },
+            "url": "http://localhost:8080/query"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics Agent",
+      "item": [
+        {
+          "name": "Page Views Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Give me daily page views for the last 14 days\",\n  \"propertyId\": \"123456789\"\n}"
+            },
+            "url": "http://localhost:8001/query"
+          }
+        },
+        {
+          "name": "Active Users Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are active users by country for the last 30 days?\",\n  \"propertyId\": \"123456789\"\n}"
+            },
+            "url": "http://localhost:8001/query"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SEO Agent",
+      "item": [
+        {
+          "name": "Status Code Check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Find all pages with HTTP status codes that are not 200\"\n}"
+            },
+            "url": "http://localhost:8002/query"
+          }
+        },
+        {
+          "name": "HTTPS Check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"List pages that are not using HTTPS\"\n}"
+            },
+            "url": "http://localhost:8002/query"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 10. cURL Examples
+
+**Health Check:**
+```bash
+curl http://localhost:8080/health
+```
+
+**Analytics Query:**
 ```bash
 curl -X POST "http://localhost:8080/query" \
      -H "Content-Type: application/json" \
      -d '{
            "query": "How many active users did we have last week?",
-           "propertyId": "123456"
+           "propertyId": "123456789"
+         }'
+```
+
+**SEO Query:**
+```bash
+curl -X POST "http://localhost:8080/query" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "query": "Find pages with missing titles"
+         }'
+```
+
+**Direct Analytics Agent Query:**
+```bash
+curl -X POST "http://localhost:8001/query" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "query": "Give me page views for last 7 days",
+           "propertyId": "123456789"
+         }'
+```
+
+**Direct SEO Agent Query:**
+```bash
+curl -X POST "http://localhost:8002/query" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "query": "Find pages with HTTP errors"
          }'
 ```
