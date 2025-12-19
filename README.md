@@ -8,6 +8,8 @@ Using a **Clean Microservices Architecture**, we have a robust system with indep
 
 ## 2. Architecture: Agents as Microservices
 
+![Architecture Diagram](archi.png)
+
 The system is composed of three distinct microservices, communicating over HTTP with clean JSON APIs.
 
 ### 2.1 The Orchestrator (Port 8080)
